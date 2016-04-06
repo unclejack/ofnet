@@ -316,12 +316,9 @@ func (self *Vrouter) AddVtepPort(portNo uint32, remoteIp net.IP) error {
 		// Note that we bypass policy lookup on dest host.
 		sNATTbl := self.ofSwitch.GetTable(SRV_PROXY_SNAT_TBL_ID)
 		portVlanFlow.Next(sNATTbl)
+
 		//set vrf id as METADATA
 		vrfmetadata, vrfmetadataMask := Vrfmetadata(*vrfid)
-
-		metadata := METADATA_RX_VTEP | vrfmetadata
-		metadataMask := METADATA_RX_VTEP | vrfmetadataMask
-
 		portVlanFlow.SetMetadata(metadata, metadataMask)
 	}
 

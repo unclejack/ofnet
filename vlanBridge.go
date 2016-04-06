@@ -321,7 +321,7 @@ func (vl *VlanBridge) initFgraph() error {
 		Priority: FLOW_MISS_PRIORITY,
 	})
 	dstGrpTbl := vl.ofSwitch.GetTable(DST_GRP_TBL_ID)
-	evlanMissFlow.Next(dstGrpTbl)
+	vlanMissFlow.Next(dstGrpTbl)
 
 	// Redirect ARP Request packets to controller
 	arpFlow, _ := vl.inputTable.NewFlow(ofctrl.FlowMatch{
