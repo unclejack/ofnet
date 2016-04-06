@@ -319,6 +319,10 @@ func (self *Vrouter) AddVtepPort(portNo uint32, remoteIp net.IP) error {
 
 		//set vrf id as METADATA
 		vrfmetadata, vrfmetadataMask := Vrfmetadata(*vrfid)
+
+		metadata := METADATA_RX_VTEP | vrfmetadata
+		metadataMask := METADATA_RX_VTEP | vrfmetadataMask
+
 		portVlanFlow.SetMetadata(metadata, metadataMask)
 	}
 
@@ -386,6 +390,7 @@ func (self *Vrouter) AddVlan(vlanId uint16, vni uint32, vrf string) error {
 			log.Errorf("Invalid vrf name:%v", *vrf)
 			return errors.New("Invalid vrf name")
 		}
+
 		//set vrf id as METADATA
 		vrfmetadata, vrfmetadataMask := Vrfmetadata(*vrfid)
 
