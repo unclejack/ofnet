@@ -324,6 +324,7 @@ func (self *Vrouter) AddVtepPort(portNo uint32, remoteIp net.IP) error {
 
 		portVlanFlow.SetMetadata(metadata, metadataMask)
 	}
+
 	// walk all routes and see if we need to install it
 	for _, endpoint := range self.agent.endpointDb {
 		if endpoint.OriginatorIp.String() == remoteIp.String() {
