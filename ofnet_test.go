@@ -58,6 +58,66 @@ var hostBridges [NUM_HOST_BRIDGE]*HostBridge
 
 var localIpList []string
 
+func createAgents(numAgents, rpcPortStart, ovsPortStart int, agentType string) {
+	var dpName = agentType
+
+	if agentType == "vrtr" {
+		dpName = "vrouter"
+	}
+
+	for i := 0; i < numAgents; i++ {
+		brName := fmt.Sprintf("%vBridge%v", agentType, i)
+		rpcPort := uint16(rpcPortStart + i)
+		ovsPort := uint16(ovsPortStart + i)
+		localIP := net.ParseIP(localIpList[i])
+
+		agent, err := NewOfnetAgent(brName, dpName, localIP, rpcPort, ovsPort, nil)
+		if err != nil {
+			log.Fatalf("failed to create %v ofnet agent: %v", agentType, err)
+		}
+
+		agent.MyAddr = "127.0.0.1"
+
+		switch agentType {
+		case "vlan":
+			vlanAgents[i] = agent
+		case "vxlan":
+			vxlanAgents[i] = agent
+		case "vrtr":
+			vrtrAgents[i] = agent
+		}
+
+		log.Infof("created %v ofnet agent: %v", agentType, agent)
+	}
+}
+
+func createSwitches(numAgents, ovsPortStart, ovsDriversOffset int, brPrefix string) {
+	errControllerAdd := "failed to add controller to OVs, brname %s: %v"
+	for i := 0; i < numAgents; i++ {
+		brName := fmt.Sprintf("%vBridge%v", brPrefix, i)
+		ovsPort := uint16(ovsPortStart + i)
+		j := ovsDriversOffset + i
+		ovsDrivers[j] = ovsdbDriver.NewOvsDriver(brName)
+		err := ovsDrivers[j].AddController("127.0.0.1", ovsPort)
+		if err != nil {
+			log.Fatalf(errControllerAdd, brName, err)
+		}
+	}
+}
+
+func deleteBridges(numAgents, ovsDriversOffset int, brPrefix string) {
+	errDeletingBridge := "failed to delete bridge %v: %v"
+	for i := 0; i < numAgents; i++ {
+		brName := fmt.Sprintf("%vBridge%v", brPrefix, i)
+		log.Infof("deleting OVS bridge: %s", brName)
+		err := ovsDrivers[ovsDriversOffset+i].DeleteBridge(brName)
+		if err != nil {
+			log.Fatalf(errDeletingBridge, brName, err)
+		}
+	}
+
+}
+
 // Create couple of ofnet masters and few agents
 func TestMain(m *testing.M) {
 	var err error
@@ -103,55 +163,9 @@ func TestMain(m *testing.M) {
 	time.Sleep(1 * time.Second)
 
 	// Create agents
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vrtrBridge" + fmt.Sprintf("%d", i)
-		rpcPort := uint16(VRTR_RPC_PORT + i)
-		ovsPort := uint16(VRTR_OVS_PORT + i)
-		lclIp := net.ParseIP(localIpList[i])
-		vrtrAgents[i], err = NewOfnetAgent(brName, "vrouter", lclIp, rpcPort, ovsPort, nil)
-		if err != nil {
-			log.Fatalf("Error creating ofnet agent. Err: %v", err)
-		}
-
-		// Override MyAddr to local host
-		vrtrAgents[i].MyAddr = "127.0.0.1"
-
-		log.Infof("Created vrouter ofnet agent: %v", vrtrAgents[i])
-	}
-
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vxlanBridge" + fmt.Sprintf("%d", i)
-		rpcPort := uint16(VXLAN_RPC_PORT + i)
-		ovsPort := uint16(VXLAN_OVS_PORT + i)
-		lclIp := net.ParseIP(localIpList[i])
-
-		vxlanAgents[i], err = NewOfnetAgent(brName, "vxlan", lclIp, rpcPort, ovsPort, nil)
-		if err != nil {
-			log.Fatalf("Error creating ofnet agent. Err: %v", err)
-		}
-
-		// Override MyAddr to local host
-		vxlanAgents[i].MyAddr = "127.0.0.1"
-
-		log.Infof("Created vxlan ofnet agent: %v", vxlanAgents[i])
-	}
-
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vlanBridge" + fmt.Sprintf("%d", i)
-		rpcPort := uint16(VLAN_RPC_PORT + i)
-		ovsPort := uint16(VLAN_OVS_PORT + i)
-		lclIp := net.ParseIP(localIpList[i])
-
-		vlanAgents[i], err = NewOfnetAgent(brName, "vlan", lclIp, rpcPort, ovsPort, nil)
-		if err != nil {
-			log.Fatalf("Error creating ofnet agent. Err: %v", err)
-		}
-
-		// Override MyAddr to local host
-		vlanAgents[i].MyAddr = "127.0.0.1"
-
-		log.Infof("Created vlan ofnet agent: %v", vlanAgents[i])
-	}
+	createAgents(NUM_AGENT, VRTR_RPC_PORT, VRTR_OVS_PORT, "vrtr")
+	createAgents(NUM_AGENT, VXLAN_RPC_PORT, VXLAN_OVS_PORT, "vxlan")
+	createAgents(NUM_AGENT, VLAN_RPC_PORT, VLAN_OVS_PORT, "vlan")
 
 	for i := 0; i < NUM_VLRTR_AGENT; i++ {
 		brName := "vlrtrBridge" + fmt.Sprintf("%d", i)
@@ -262,62 +276,19 @@ func TestMain(m *testing.M) {
 	log.Infof("Made dummy rpc call to all agents")
 
 	// Create OVS switches and connect them to vrouter ofnet agents
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vrtrBridge" + fmt.Sprintf("%d", i)
-		ovsPort := uint16(VRTR_OVS_PORT + i)
-		ovsDrivers[i] = ovsdbDriver.NewOvsDriver(brName)
-		err := ovsDrivers[i].AddController("127.0.0.1", ovsPort)
-		if err != nil {
-			log.Fatalf("Error adding controller to ovs: %s", brName)
-		}
-	}
+	createSwitches(NUM_AGENT, VRTR_OVS_PORT, 0, "vrtr")
+
 	// Create OVS switches and connect them to vxlan ofnet agents
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vxlanBridge" + fmt.Sprintf("%d", i)
-		ovsPort := uint16(VXLAN_OVS_PORT + i)
-		j := NUM_AGENT + i
-		ovsDrivers[j] = ovsdbDriver.NewOvsDriver(brName)
-		err := ovsDrivers[j].AddController("127.0.0.1", ovsPort)
-		if err != nil {
-			log.Fatalf("Error adding controller to ovs: %s", brName)
-		}
-	}
+	createSwitches(NUM_AGENT, VXLAN_OVS_PORT, NUM_AGENT, "vxlan")
 
 	// Create OVS switches and connect them to vlan ofnet agents
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vlanBridge" + fmt.Sprintf("%d", i)
-		ovsPort := uint16(VLAN_OVS_PORT + i)
-		j := (2 * NUM_AGENT) + i
-		ovsDrivers[j] = ovsdbDriver.NewOvsDriver(brName)
-		err := ovsDrivers[j].AddController("127.0.0.1", ovsPort)
-		if err != nil {
-			log.Fatalf("Error adding controller to ovs: %s", brName)
-		}
-	}
+	createSwitches(NUM_AGENT, VLAN_OVS_PORT, 2*NUM_AGENT, "vlan")
 
 	// Create OVS switches and connect them to vxlan ofnet agents
-	for i := 0; i < NUM_VLRTR_AGENT; i++ {
-		brName := "vlrtrBridge" + fmt.Sprintf("%d", i)
-		ovsPort := uint16(VLRTR_OVS_PORT + i)
-		j := (3 * NUM_AGENT) + i
-		ovsDrivers[j] = ovsdbDriver.NewOvsDriver(brName)
-		err := ovsDrivers[j].AddController("127.0.0.1", ovsPort)
-		if err != nil {
-			log.Fatalf("Error adding controller to ovs: %s", brName)
-		}
-	}
+	createSwitches(NUM_VLRTR_AGENT, VLRTR_OVS_PORT, 3*NUM_AGENT, "vlrtr")
 
 	// Create OVS switches and connect them to hostbridge agents
-	for i := 0; i < NUM_HOST_BRIDGE; i++ {
-		brName := "hostBridge" + fmt.Sprintf("%d", i)
-		ovsPort := uint16(HB_OVS_PORT + i)
-		j := HB_AGENT_INDEX + i
-		ovsDrivers[j] = ovsdbDriver.NewOvsDriver(brName)
-		err := ovsDrivers[j].AddController("127.0.0.1", ovsPort)
-		if err != nil {
-			log.Fatalf("Error adding controller to ovs: %s", brName)
-		}
-	}
+	createSwitches(NUM_HOST_BRIDGE, HB_OVS_PORT, HB_AGENT_INDEX, "host")
 
 	// Wait for 20sec for switch to connect to controller
 	time.Sleep(10 * time.Second)
@@ -443,38 +414,11 @@ func waitAndCleanup() {
 		hostBridges[i].Delete()
 	}
 
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vrtrBridge" + fmt.Sprintf("%d", i)
-		log.Infof("Deleting OVS bridge: %s", brName)
-		err := ovsDrivers[i].DeleteBridge(brName)
-		if err != nil {
-			log.Fatalf("Error deleting the bridge. Err: %v", err)
-		}
-	}
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vxlanBridge" + fmt.Sprintf("%d", i)
-		log.Infof("Deleting OVS bridge: %s", brName)
-		err := ovsDrivers[NUM_AGENT+i].DeleteBridge(brName)
-		if err != nil {
-			log.Fatalf("Error deleting the bridge. Err: %v", err)
-		}
-	}
-	for i := 0; i < NUM_AGENT; i++ {
-		brName := "vlanBridge" + fmt.Sprintf("%d", i)
-		log.Infof("Deleting OVS bridge: %s", brName)
-		err := ovsDrivers[(2*NUM_AGENT)+i].DeleteBridge(brName)
-		if err != nil {
-			log.Fatalf("Error deleting the bridge. Err: %v", err)
-		}
-	}
-	for i := 0; i < NUM_VLRTR_AGENT; i++ {
-		brName := "vlrtrBridge" + fmt.Sprintf("%d", i)
-		log.Infof("Deleting OVS bridge: %s", brName)
-		err := ovsDrivers[(3*NUM_AGENT)+i].DeleteBridge(brName)
-		if err != nil {
-			log.Fatalf("Error deleting the bridge. Err: %v", err)
-		}
-	}
+	deleteBridges(NUM_AGENT, 0, "vrtr")
+	deleteBridges(NUM_AGENT, NUM_AGENT, "vxlan")
+	deleteBridges(NUM_AGENT, 2*NUM_AGENT, "vlan")
+	deleteBridges(NUM_VLRTR_AGENT, 3*NUM_AGENT, "vlrtr")
+
 	for i := 0; i < NUM_HOST_BRIDGE; i++ {
 		brName := "hostBridge" + fmt.Sprintf("%d", i)
 		log.Infof("Deleting OVS bridge: %s", brName)
